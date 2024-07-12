@@ -1,0 +1,80 @@
+[[https://arxiv.org/pdf/2406.04344][Verbalized Machine Learning paper]] introduced a novel idea to optimize over the prompt space as opposed to optimize over model parameters, using LLM as an optimizer.
+
+The idea is very powerful because it allows
+a) easy encoding of inductive bias (expert knowledge)
+b) easy to debug (can ask the model itself)
+c) no need to specify Loss, Model class, Optimization algorithm, and etc.
+
+I like the abstraction very much, but for its wide spread adoption, it needs to have a intuitive software interface, just like pytorch. Therefore the idea of this project is to rewrite the common training routines in pytorch with LLM.
+
+#+BEGIN_SRC python :results output
+class LLM:
+    '''abstract LLM class'''
+    def __init__(self, system_prompt:str):
+        self.system_prompt = system_prompt
+        
+    def __call__(self, query:str)->str:
+        '''query the model with the given prompt'''
+        pass
+    
+class Model:
+    def __init__(self, theta:str, d_in:int, d_out:int):
+        # theta here is part of the system prompt
+        self.theta = theta
+        self.d_in = d_in
+        self.d_out = d_out
+        self.llm = LLM(theta + f'input_dim={d_in}, output_dim={d_out}')
+
+    def set_theta(self, theta:str):
+        '''set the model parameters'''
+        self.theta = theta
+        
+    def forward(self, x:torch.Tensor)->torch.Tensor:
+        '''forward pass'''
+        return self.llm(f'forward(x={x})')
+
+class Criterion:
+    def __init__(self, theta:str):
+        self.theta = theta
+        self.llm = LLM(theta)
+
+    def __call__(self, y_pred:torch.Tensor, y_true:torch.Tensor)->torch.Tensor:
+        '''compute the loss'''
+        return self.llm(f'loss(y_pred={y_pred}, y_true={y_true})')
+
+class Optimizer:
+    def __init__(self, theta:str, model:Model):
+        self.theta = theta
+        self.model = model
+        self.llm = LLM(theta)
+        self.zero_grad()
+
+    def zero_grad(self):
+        self.examples = [] # inputs
+        self.feedbacks = [] # outputs from criterion
+
+    def add_example(self, x:torch.Tensor, y_pred:torch.Tensor, y_true:torch.Tensor, loss:torch.Tensor):
+        '''add an example to the optimizer'''
+        self.examples.append(x)
+        self.feedbacks.append(self.llm(f'feedback(y_pred={y_pred}, y_true={y_true}, loss={loss})')
+        
+    def step(self):
+        '''update the model parameters'''
+        new_theta = self.llm(f'update(theta={self.model.theta}, examples={self.examples}, feedbacks={self.feedbacks})')
+        self.model.set_theta(new_theta)
+
+d_in, d_out = 10, 2
+model = Model('binary classification model', d_in, d_out)
+criterion = Criterion('binary classification loss')
+optimizer = Optimizer('adam optimizer', model)
+
+for x, y in dataloader:
+    optimizer.zero_grad()
+    y_pred = model(x)
+    loss = criterion(y_pred, y)
+    optimizer.add_example(x, y_pred, y, loss)
+    optimizer.step()
+                            
+#+END_SRC
+
+

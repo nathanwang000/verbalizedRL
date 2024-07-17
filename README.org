@@ -8,73 +8,454 @@ c) no need to specify Loss, Model class, Optimization algorithm, and etc.
 I like the abstraction very much, but for its wide spread adoption, it needs to have a intuitive software interface, just like pytorch. Therefore the idea of this project is to rewrite the common training routines in pytorch with LLM.
 
 #+BEGIN_SRC python :results output
+import sys
+import os
+import torch
+from torch.utils.data import DataLoader
+
+# load the server_setup/fun_code/genAI/llm/lib/utils
+sys.path.append(os.path.expanduser("~/server_setup/fun_code/genAI/llm/lib"))
+
+from utils import print_openai_stream, repl
+from utils import ChatVisionBot
+
+
+def print_debug(f):
+    def _f(*args, **kwargs):
+        o = f(*args, **kwargs)
+        print(f"output of {f} is {o}")
+        return o
+
+    return _f
+
+
 class LLM:
-    '''abstract LLM class'''
-    def __init__(self, system_prompt:str):
+    """abstract LLM class"""
+
+    def __init__(self, system_prompt: str):
         self.system_prompt = system_prompt
-        
-    def __call__(self, query:str)->str:
-        '''query the model with the given prompt'''
-        pass
-    
+        self.chatbot = ChatVisionBot(
+            system_prompt,
+            use_azure=True,
+            stream=False,
+        )
+
+    def __call__(self, query: str) -> str:
+        """query the model with the given prompt"""
+        return self.chatbot(query)
+
+
 class Model:
-    def __init__(self, theta:str, d_in:int, d_out:int):
+    def __init__(self, theta: str, d_in: int, d_out: int):
         # theta here is part of the system prompt
         self.theta = theta
         self.d_in = d_in
         self.d_out = d_out
-        self.llm = LLM(theta + f'input_dim={d_in}, output_dim={d_out}')
+        self.llm = LLM(theta + f"input_dim={d_in}, output_dim={d_out}")
 
-    def set_theta(self, theta:str):
-        '''set the model parameters'''
+    def set_theta(self, theta: str):
+        """set the model parameters"""
         self.theta = theta
-        
-    def forward(self, x:torch.Tensor)->torch.Tensor:
-        '''forward pass'''
-        return self.llm(f'forward(x={x})')
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """forward pass"""
+        return self.llm(f"forward(x={x})")
+
+    @print_debug
+    def __call__(self, x):
+        return self.forward(x)
+
 
 class Criterion:
-    def __init__(self, theta:str):
+    def __init__(self, theta: str):
         self.theta = theta
         self.llm = LLM(theta)
 
-    def __call__(self, y_pred:torch.Tensor, y_true:torch.Tensor)->torch.Tensor:
-        '''compute the loss'''
-        return self.llm(f'loss(y_pred={y_pred}, y_true={y_true})')
+    @print_debug
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        """compute the loss"""
+        return self.llm(f"loss(y_pred={y_pred}, y_true={y_true})")
+
 
 class Optimizer:
-    def __init__(self, theta:str, model:Model):
+    def __init__(self, theta: str, model: Model):
         self.theta = theta
         self.model = model
         self.llm = LLM(theta)
         self.zero_grad()
 
     def zero_grad(self):
-        self.examples = [] # inputs
-        self.feedbacks = [] # outputs from criterion
+        self.examples = []  # inputs
+        self.feedbacks = []  # outputs from criterion
 
-    def add_example(self, x:torch.Tensor, y_pred:torch.Tensor, y_true:torch.Tensor, loss:torch.Tensor):
-        '''add an example to the optimizer'''
+    def add_example(
+        self,
+        x: torch.Tensor,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        loss: torch.Tensor,
+    ):
+        """add an example to the optimizer"""
         self.examples.append(x)
-        self.feedbacks.append(self.llm(f'feedback(y_pred={y_pred}, y_true={y_true}, loss={loss})')
-        
+        self.feedbacks.append(
+            self.llm(f"feedback(y_pred={y_pred}, y_true={y_true}, loss={loss})")
+        )
+
     def step(self):
-        '''update the model parameters'''
-        new_theta = self.llm(f'update(theta={self.model.theta}, examples={self.examples}, feedbacks={self.feedbacks})')
+        """update the model parameters"""
+        new_theta = self.llm(
+            f"update(theta={self.model.theta}, examples={self.examples}, feedbacks={self.feedbacks})"
+        )
         self.model.set_theta(new_theta)
 
-d_in, d_out = 10, 2
-model = Model('binary classification model', d_in, d_out)
-criterion = Criterion('binary classification loss')
-optimizer = Optimizer('adam optimizer', model)
 
-for x, y in dataloader:
+# Dummy dataset with random numbers
+class SimpleDataset(torch.utils.data.Dataset):
+    def __init__(self, n_samples=100, d_in=10, d_out=2):
+        # Initialize your data here
+        self.data = torch.randn(n_samples, d_in)
+        self.labels = torch.randint(0, d_out, (n_samples,))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
+
+
+d_in, d_out = 10, 2
+batch_size = 4
+n_samples = 8
+dataset = SimpleDataset(n_samples, d_in, d_out)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+model = Model("binary classification model", d_in, d_out)
+criterion = Criterion("binary classification loss")
+optimizer = Optimizer("adam optimizer", model)
+
+for i, (x, y) in enumerate(dataloader):
+    print(f"batch [{i+1} / {len(dataloader)}]")
     optimizer.zero_grad()
     y_pred = model(x)
     loss = criterion(y_pred, y)
     optimizer.add_example(x, y_pred, y, loss)
     optimizer.step()
-                            
 #+END_SRC
+
+#+RESULTS:
+#+begin_example
+batch [1 / 2]
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1051, prompt_tokens=411, total_tokens=1462)
+output of <function Model.__call__ at 0x16be54d30> is To perform the forward pass of a binary classification model, we need details about the underlying model architecture (i.e., the neural network layers, activation functions, etc.). Generally, a basic binary classification model might consist of a series of fully connected (linear) layers followed by activation functions, culminating in a final layer with a sigmoid activation to output probabilities for the binary classes.
+
+Given `input_dim=10` and `output_dim=2`, we should understand that:
+- Each input tensor has 10 features.
+- We are expecting 2 output values (commonly logits for binary classification tasks).
+
+Here's a step-by-step forward pass with an assumed architecture:
+
+1. **Layer Definitions**: 
+   - Linear Layer 1: \( \text{Linear}(10, 64) \)
+   - Activation Function: ReLU
+   - Linear Layer 2: \( \text{Linear}(64, 32) \)
+   - Activation Function: ReLU
+   - Output Layer: \( \text{Linear}(32, 2) \)
+
+2. **Model Implementation**:
+   Below is the Python code example assuming you're using PyTorch for the model:
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BinaryClassificationModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(BinaryClassificationModel, self).__init__()
+        self.layer1 = nn.Linear(input_dim, 64)
+        self.layer2 = nn.Linear(64, 32)
+        self.output_layer = nn.Linear(32, output_dim)
+    
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = self.output_layer(x)
+        return x
+
+# Define the model
+input_dim = 10
+output_dim = 2
+model = BinaryClassificationModel(input_dim, output_dim)
+
+# Define input tensor
+x = torch.tensor([[ 9.4357e-01,  6.1303e-01, -5.6026e-01, -5.2464e-01, -2.3379e-02,
+                   6.0292e-02,  1.1813e+00,  2.8060e-01, -2.4303e+00, -2.0782e-01],
+                 [-9.4941e-01, -2.1245e+00,  3.6159e+00, -4.7061e-01, -1.0547e+00,
+                   1.0011e+00, -2.8454e-03, -1.9326e+00,  8.6369e-01,  5.6656e-01],
+                 [-4.8380e-01, -1.0387e+00,  1.0252e+00, -7.4762e-01, -6.6021e-02,
+                  -7.0348e-01, -1.9998e-01, -2.6241e-01,  3.7792e-01, -4.0871e-01],
+                 [ 3.1175e+00,  1.4763e-01,  3.0147e-01, -6.2716e-01, -1.0138e+00,
+                   1.3308e+00,  1.3550e+00,  1.1703e+00,  1.4429e+00,  3.4884e-02]])
+
+# Perform forward pass
+output = model(x)
+print(output)
+```
+
+,**Explanation**:
+1. **Input Layer**: Receives input tensor `x` of shape `[4, 10]`.
+2. **Linear Layer 1**: Transforms the input tensor from shape `[4, 10]` to shape `[4, 64]`.
+3. **ReLU Activation**: Applies the ReLU activation function element-wise.
+4. **Linear Layer 2**: Transforms the tensor from shape `[4, 64]` to shape `[4, 32]`.
+5. **ReLU Activation**: Again applies the ReLU activation function element-wise.
+6. **Output Layer**: Finally, transforms the tensor from shape `[4, 32]` to shape `[4, 2]`, producing logits for each class.
+
+The output tensor will have the shape `[4, 2]`, representing the logits for the two classes for each of the 4 input samples. Typically, one might apply a softmax function further to convert these logits into probabilities.
+
+For binary classification, often the model is structured to output a single value per sample, using a sigmoid activation in the final layer, but two values (logits) can also be utilized for more sophisticated methods or outputs.
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1206, prompt_tokens=1085, total_tokens=2291)
+output of <function Criterion.__call__ at 0x16be54ee0> is In binary classification, when dealing with the outputs from the neural network for a forward pass, the output layer often has a single unit with a sigmoid activation function, producing a value between 0 and 1 representing the probability of the positive class. However, in your case, the model outputs two logits per sample, aligning more with multi-class classification but solvable within a binary classification context by treating the logits as unnormalized probabilities.
+
+To compute the loss for such a model in a binary classification task, you typically use binary cross-entropy (BCE) loss. In PyTorch, this can be implemented using `nn.BCEWithLogitsLoss()`, which combines a sigmoid layer and the BCE loss in one single class. If you have logits, you apply this loss function directly to the logits because it incorporates a sigmoid calculation internally for numerical stability.
+
+Given the model output shape `[4, 2]` and the label tensor `y_true = tensor([1, 1, 1, 0])`, the steps involve selecting the logits corresponding to the true class and computing the BCE loss.
+
+Let's compute the loss for the given model and tensor:
+
+1. **Convert `y_true` to a tensor of shape `[batch_size, 2]`**:
+   - For binary labels, convert the scalar to a one-hot tensor (though for BCE with logits, you can use plain format directly).
+
+2. **Compute BCE loss using logits**:
+   - PyTorch makes it convenient with `nn.BCEWithLogitsLoss` which takes care of stability issues with logits.
+
+Here is an example code:
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BinaryClassificationModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(BinaryClassificationModel, self).__init__()
+        self.layer1 = nn.Linear(input_dim, 64)
+        self.layer2 = nn.Linear(64, 32)
+        self.output_layer = nn.Linear(32, output_dim)
+    
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = self.output_layer(x)
+        return x
+
+# Define the model
+input_dim = 10
+output_dim = 2
+model = BinaryClassificationModel(input_dim, output_dim)
+
+# Define input tensor
+x = torch.tensor([[ 9.4357e-01,  6.1303e-01, -5.6026e-01, -5.2464e-01, -2.3379e-02,
+                    6.0292e-02,  1.1813e+00,  2.8060e-01, -2.4303e+00, -2.0782e-01],
+                  [-9.4941e-01, -2.1245e+00,  3.6159e+00, -4.7061e-01, -1.0547e+00,
+                    1.0011e+00, -2.8454e-03, -1.9326e+00,  8.6369e-01,  5.6656e-01],
+                  [-4.8380e-01, -1.0387e+00,  1.0252e+00, -7.4762e-01, -6.6021e-02,
+                   -7.0348e-01, -1.9998e-01, -2.6241e-01,  3.7792e-01, -4.0871e-01],
+                  [ 3.1175e+00,  1.4763e-01,  3.0147e-01, -6.2716e-01, -1.0138e+00,
+                    1.3308e+00,  1.3550e+00,  1.1703e+00,  1.4429e+00,  3.4884e-02]])
+
+# Forward pass
+logits = model(x)
+
+# Define true labels
+y_true = torch.tensor([1, 1, 1, 0])
+
+# Convert labels to one-hot encoding if necessary
+# In PyTorch BCEWithLogitsLoss, typically no need, but here's a custom way if you needed logits per class
+# y_true_one_hot = torch.zeros_like(logits).scatter_(1, y_true.unsqueeze(1), 1)
+
+# Compute loss
+loss_fn = nn.BCEWithLogitsLoss()
+loss = loss_fn(logits[:, 1], y_true.float())  # logits[:, 1] selects logits for positive class
+print('Loss:', loss.item())
+```
+
+### Explanation:
+- **Model Definition and Forward Pass**:
+  The model is defined and the forward pass is executed to get the logits for the test inputs.
+  
+- **Loss Computation**:
+  - The `logits` tensor has shape `[4, 2]`.
+  - We select the second column `logits[:, 1]` which corresponds to positive class logits.
+  - Compute the binary cross-entropy loss between selected logits and `y_true` using `nn.BCEWithLogitsLoss()`.
+
+This method ensures the proper calculation of loss with logits in the context of binary classification, avoiding issues with direct use of probabilities.
+
+Use `BCEWithLogitsLoss` for a more stable training process, especially with a large range of logits. If the model outputs should be single value per input, modify the final layer to `nn.Linear(32, 1)` and adjust the loss computation accordingly.
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1039, prompt_tokens=2292, total_tokens=3331)
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1172, prompt_tokens=4850, total_tokens=6022)
+batch [2 / 2]
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=830, prompt_tokens=1744, total_tokens=2574)
+output of <function Model.__call__ at 0x16be54d30> is To perform a forward pass with the given input tensor and the previously defined model, proceed as follows. Ensure that the model is initialized and ready to use. Then, pass the input tensor `x` through the model to obtain the output.
+
+Here's the step-by-step process in Python, assuming you are using PyTorch and have already defined the `BinaryClassificationModel` as shown in the previous response.
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# Model Definition as previously described
+class BinaryClassificationModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(BinaryClassificationModel, self).__init__()
+        self.layer1 = nn.Linear(input_dim, 64)
+        self.layer2 = nn.Linear(64, 32)
+        self.output_layer = nn.Linear(32, output_dim)
+    
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = self.output_layer(x)
+        return x
+
+# Define the model
+input_dim = 10
+output_dim = 2
+model = BinaryClassificationModel(input_dim, output_dim)
+
+# Define new input tensor
+x_new = torch.tensor([[ 1.1436, -1.9827,  0.4693, -1.4983, -0.1067,  0.9637,  0.1392,  0.0509,
+         -0.9634,  0.2251],
+        [ 0.5792, -0.5082, -0.5844, -2.3358,  0.4055, -2.2201,  0.9923, -0.1259,
+          0.9878,  0.4897],
+        [ 0.4441,  0.5798, -0.0680,  0.0890,  0.0558, -0.2668,  1.0175, -2.4966,
+          1.4269, -0.7855],
+        [ 0.4427, -0.3830, -1.3250,  0.4344,  0.5449,  1.3932,  0.2026,  0.3084,
+         -0.4864,  1.8304]])
+
+# Perform forward pass
+output = model(x_new)
+print(output)
+```
+
+### Explanation:
+1. **Model Definition**: The `BinaryClassificationModel` is defined with three layers, as in our initial explanation. It has:
+   - A first linear layer (`Linear(10, 64)`) followed by a ReLU activation.
+   - A second linear layer (`Linear(64, 32)`) followed by another ReLU activation.
+   - A final linear layer (`Linear(32, 2)`) to produce the output logits.
+
+2. **Input Tensor**: The provided input tensor `x_new` has a shape of `[4, 10]`.
+
+3. **Forward Pass**:
+   - The input tensor is passed through the model layers in sequence.
+   - The ReLU activations aid in introducing non-linearity.
+   - The final output layer transforms the tensor into logits of shape `[4, 2]`.
+
+The ready-to-run code will print the output tensor with logits after performing the forward pass through the model:
+
+```python
+tensor([[...,...],
+        [...,...],
+        [...,...],
+        [...,...]])
+```
+
+Each row in the output tensor corresponds to the logits for the two classes for each respective input sample. You can further apply softmax if you need probabilistic class predictions:
+
+```python
+output_probabilities = F.softmax(output, dim=1)
+print(output_probabilities)
+```
+
+This will convert logits to probabilities summing to 1 for each sample.
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1022, prompt_tokens=3149, total_tokens=4171)
+output of <function Criterion.__call__ at 0x16be54ee0> is To complete the forward pass and compute the loss given the new input tensor `x_new` and true labels `y_true`, we can follow these steps:
+
+1. **Perform the forward pass** to obtain logits from the model.
+2. **Compute the binary cross-entropy loss** using the logits and the ground truth labels `y_true`.
+
+For this example, we'll use PyTorch's `nn.BCEWithLogitsLoss` to handle the computation directly from the logits. Here's how:
+
+### Step-by-Step Implementation in Python:
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# Model Definition as previously described
+class BinaryClassificationModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(BinaryClassificationModel, self).__init__()
+        self.layer1 = nn.Linear(input_dim, 64)
+        self.layer2 = nn.Linear(64, 32)
+        self.output_layer = nn.Linear(32, output_dim)
+    
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = self.output_layer(x)
+        return x
+
+# Define the model
+input_dim = 10
+output_dim = 2
+model = BinaryClassificationModel(input_dim, output_dim)
+
+# Define new input tensor
+x_new = torch.tensor([[ 1.1436, -1.9827,  0.4693, -1.4983, -0.1067,  0.9637,  0.1392,  0.0509,
+         -0.9634,  0.2251],
+        [ 0.5792, -0.5082, -0.5844, -2.3358,  0.4055, -2.2201,  0.9923, -0.1259,
+          0.9878,  0.4897],
+        [ 0.4441,  0.5798, -0.0680,  0.0890,  0.0558, -0.2668,  1.0175, -2.4966,
+          1.4269, -0.7855],
+        [ 0.4427, -0.3830, -1.3250,  0.4344,  0.5449,  1.3932,  0.2026,  0.3084,
+         -0.4864,  1.8304]])
+
+# Perform forward pass
+output = model(x_new)
+print("Logits output:\n", output)
+
+# Define true labels
+y_true = torch.tensor([0, 0, 1, 1])
+
+# Compute the binary cross-entropy loss
+# Since nn.BCEWithLogitsLoss expects logits as input, we're passing model output directly
+loss_fn = nn.BCEWithLogitsLoss()
+
+# Compute loss
+loss = loss_fn(output[:, 1], y_true.float()) # Using logits for the positive class
+print("Loss:", loss.item())
+
+# Convert logits to probabilities for interpretation
+output_probabilities = F.softmax(output, dim=1)
+print("Output Probabilities:\n", output_probabilities)
+```
+
+### Explanation:
+1. **Model Definition**: The `BinaryClassificationModel` is initialized with three layers as specified. It has an input layer that takes a 10-dimensional input and outputs 64 features, followed by a layer transforming 64 features into 32 and culminating in an output layer providing 2 logits.
+
+2. **Define New Input Tensor**: The provided input tensor `x_new` with shape `[4, 10]`.
+
+3. **Forward Pass**: The input tensor `x_new` is passed through the model to obtain the logits `output`. This tensor has shape `[4, 2]`, containing the logits for each class for all four samples.
+
+4. **Define True Labels**: The `y_true` tensor contains the actual class labels for each input sample: `[0, 0, 1, 1]`.
+
+5. **Binary Cross-Entropy Loss**: Using `nn.BCEWithLogitsLoss`, compute the binary cross-entropy loss directly from the logits. Notice that we only extract the logits for the positive class (`output[:, 1]`) for computing the loss.
+
+6. **Convert Logits to Probabilities**: For interpretation, logits can be converted to probabilities using the softmax function. The output probabilities can give insight into the model's confidence for each class.
+
+This script runs a forward pass with the new input tensor, computes the logits, calculates the BCE loss considering the true labels, and prints the associated loss and output probabilities. This way, you can understand how the model performs and debug or improve the model accordingly.
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1139, prompt_tokens=7904, total_tokens=9043)
+Azure for openai client: Don't sent personal info! use toggle_settings config.use_azure to turn it off
+CompletionUsage(completion_tokens=1180, prompt_tokens=11735, total_tokens=12915)
+#+end_example
 
 

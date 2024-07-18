@@ -6,14 +6,13 @@ from torch.utils.data import DataLoader
 # load the server_setup/fun_code/genAI/llm/lib/utils
 sys.path.append(os.path.expanduser("~/server_setup/fun_code/genAI/llm/lib"))
 
-from utils import print_openai_stream, repl
 from utils import ChatVisionBot
 
 
 def print_debug(f):
     def _f(*args, **kwargs):
         o = f(*args, **kwargs)
-        print(f"output of {f} is {o}")
+        print(f"outputForF: {f} \n{o}")
         return o
 
     return _f
@@ -38,10 +37,10 @@ class LLM:
 class Model:
     def __init__(self, theta: str, d_in: int, d_out: int):
         # theta here is part of the system prompt
-        self.theta = theta
+        self.theta = theta + f"\nnote: input_dim={d_in}, output_dim={d_out}"
         self.d_in = d_in
         self.d_out = d_out
-        self.llm = LLM(theta + f"input_dim={d_in}, output_dim={d_out}")
+        self.llm = LLM(theta)
 
     def set_theta(self, theta: str):
         """set the model parameters"""
@@ -88,15 +87,17 @@ class Optimizer:
         """add an example to the optimizer"""
         self.examples.append(x)
         self.feedbacks.append(
-            self.llm(f"feedback(y_pred={y_pred}, y_true={y_true}, loss={loss})")
+            f"feedback(y_pred={y_pred}, y_true={y_true}, loss={loss})"
         )
 
-    def step(self):
+    @print_debug
+    def step(self) -> str:
         """update the model parameters"""
         new_theta = self.llm(
             f"update(theta={self.model.theta}, examples={self.examples}, feedbacks={self.feedbacks})"
         )
         self.model.set_theta(new_theta)
+        return new_theta
 
 
 # Dummy dataset with random numbers
@@ -104,7 +105,8 @@ class SimpleDataset(torch.utils.data.Dataset):
     def __init__(self, n_samples=100, d_in=10, d_out=2):
         # Initialize your data here
         self.data = torch.randn(n_samples, d_in)
-        self.labels = torch.randint(0, d_out, (n_samples,))
+        self.labels = (self.data[:, 0] > 0).long()
+        # torch.randint(0, d_out, (n_samples,))
 
     def __len__(self):
         return len(self.data)
@@ -115,16 +117,40 @@ class SimpleDataset(torch.utils.data.Dataset):
 
 d_in, d_out = 10, 2
 batch_size = 4
-n_samples = 8
+n_samples = 4  # 12
 dataset = SimpleDataset(n_samples, d_in, d_out)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-model = Model("binary classification model", d_in, d_out)
-criterion = Criterion("binary classification loss")
-optimizer = Optimizer("adam optimizer", model)
+model = Model(
+    """You are a classification model. Given input, you respond with output. Strictly follow the following output format:
+```
+modelOutput: <model output>
+explanation: <at most 2 sentence explanation>
+```
+""",
+    d_in,
+    d_out,
+)
+criterion = Criterion(
+    """You are a loss function. Given prediction from model, y_pred, and ground truth, y_true, you will judge how good y_pred is. Strictly follow the following output fomrat
+```
+lossScore: <float>
+explanation: <at most 2 sentence explanation>
+```
+"""
+)
+optimizer = Optimizer(
+    """You are an optimizer. You are given past examples of input and output of a function as well as a models prediction on the function output. Your job is to update the prompt to the model so that the model will fit the function better. For example, you might observe the model is linear and thus propose a linear function in prompt. Be concise in your answer. Strictly follow the following output format:
+```
+optimizerNewPrompt: <str>
+explanation: <at most 2 sentence explanation>
+```
+""",
+    model,
+)
 
 for i, (x, y) in enumerate(dataloader):
-    print(f"batch [{i+1} / {len(dataloader)}]")
+    print(f"----- batch [{i+1} / {len(dataloader)}] -----")
     optimizer.zero_grad()
     y_pred = model(x)
     loss = criterion(y_pred, y)
